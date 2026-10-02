@@ -1,0 +1,53 @@
+:root {
+  --bg-deep: #101632;
+  --bg-soft: #222c52;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 0%, var(--bg-soft) 0%, var(--bg-deep) 70%);
+  font-family: "Segoe UI", "Yu Gothic UI", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+#game {
+  display: block;
+  /* 480 x 800 の縦画面。ウィンドウに収まるよう縮小する */
+  width: min(100vw, calc(100vh * 0.6));
+  height: min(100vh, calc(100vw / 0.6));
+  /* スマホではアドレスバーを除いた見えている高さに合わせる(dvh 非対応なら上の行が使われる) */
+  width: min(100vw, calc(100dvh * 0.6));
+  height: min(100dvh, calc(100vw / 0.6));
+  border-radius: 14px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+}
+
+noscript {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 18px;
+}

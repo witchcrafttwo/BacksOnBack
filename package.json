@@ -1,0 +1,19 @@
+{
+  "name": "backs-on-backs",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "バックおんバックス - バッグを積み上げる物理パズルゲーム",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lan": "vite build && vite preview --host --port 4173 --strictPort"
+  },
+  "dependencies": {
+    "matter-js": "0.20.0"
+  },
+  "devDependencies": {
+    "vite": "8.3.1"
+  }
+}
