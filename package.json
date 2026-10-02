@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lan": "vite build && vite preview --host --port 4173 --strictPort"
+    "lan": "node scripts/serve.mjs"
   },
   "dependencies": {
     "matter-js": "0.20.0"
