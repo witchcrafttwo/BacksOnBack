@@ -1,17 +1,14 @@
 import { defineConfig } from 'vite';
 
-/**
- * 本番サーバー(vite preview)が受け付けるホスト名。
- * Vite は、知らないホスト名で来たアクセスを「Blocked request」(403) で断る(DNS リバインディング対策)。
- * IP アドレスと localhost はもともと通るので、LAN の URL はこのままで使える。
- *  - '.trycloudflare.com' : Cloudflare のクイックトンネル(ネット公開.bat)。URL が毎回変わるので、サブドメインごと許可する
- *  - 自分のドメインで Cloudflare Tunnel を作ったときは、そのホスト名を足す(例: 'game.example.com')。
- *    足したあとは、動いている本番サーバーを一度閉じてから起動し直す(設定は起動したときに読むため)
- */
-const PUBLIC_HOSTS = ['.trycloudflare.com'];
-
 export default defineConfig({
   preview: {
-    allowedHosts: PUBLIC_HOSTS,
+    // 本番サーバー(本番起動.bat / npm run lan)は、どのホスト名で来たアクセスも受け付ける。
+    // Cloudflare Tunnel などで localhost:4173 に転送すると、Host ヘッダーは公開したドメイン名のまま届く。
+    // Vite は知らないホスト名を「Blocked request」(403) で断るので、本番サーバーだけそのチェックを外している。
+    // 本番サーバーが配るのは完成版(dist)のファイルだけで、ソースは配らないので、外しても見られて困るものは無い。
+    // 開発サーバー(npm run dev)はチェックしたまま。
+    // ドメインを決め打ちにしたいときは true の代わりに ['game.example.com'] のように書く
+    // (変えたあとは、動いている本番サーバーのウィンドウを一度閉じてから起動し直す)
+    allowedHosts: true,
   },
 });

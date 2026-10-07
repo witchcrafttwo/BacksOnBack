@@ -8,8 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lan": "node scripts/serve.mjs",
-    "tunnel": "node scripts/serve.mjs --tunnel"
+    "lan": "node scripts/serve.mjs"
   },
   "dependencies": {
     "matter-js": "0.20.0"
