@@ -1,17 +1,71 @@
 // 本番用の起動。「本番起動.bat」をダブルクリック(または npm run lan)で動く。
-//  1. 前回のビルドのあとにソースが変わっていたら、ビルドし直す(変わっていなければ省略)
-//  2. 完成版(dist)をポート 4173 で配る(このパソコンの localhost からも、LAN からも開ける)。
+//  1. 必要な部品(package.json の vite・pg など)が足りなければ、npm install で入れる
+//  2. 前回のビルドのあとにソースが変わっていたら、ビルドし直す(変わっていなければ省略)
+//  3. 完成版(dist)とランキングの API をポート 4173 で配る(このパソコンの localhost からも、LAN からも開ける)。
 //     すでに起動中なら新しくは起動しない。動いているサーバーは dist を毎回読み直すので、
-//     そのまま新しい版を配る(遊んでいる人はページを再読み込みすれば新しい版になる)
-import { build, preview } from 'vite';
-import { existsSync, readFileSync, readdirSync, statSync, utimesSync } from 'node:fs';
+//     そのまま新しい版を配る(遊んでいる人はページを再読み込みすれば新しい版になる)。
+//     ただしサーバー側のしくみ(ランキングなど)が変わったときは、起動し直すよう案内する
+//  4. ランキングのデータベース(PostgreSQL)につながるか確かめて、結果を出す。
+//     設定ファイル(.env)が無ければ、ひな形(.env.example)から作る
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, readFileSync, readdirSync, statSync, utimesSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ENV_FILE, checkDatabase, serverRev } from '../server/ranking.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4173;
 /** ビルドした時刻の目印(ビルドのたびに書き直される dist/index.html の更新時刻) */
 const STAMP = join(ROOT, 'dist', 'index.html');
+
+const say = (s = '') => console.log(s ? `  ${s}` : '');
+
+/** 部品の入っている版(無ければ null)。node_modules は上のフォルダまでさかのぼって探す(Node と同じ) */
+function installedVersion(name) {
+  for (let dir = ROOT; ; dir = dirname(dir)) {
+    const file = join(dir, 'node_modules', name, 'package.json');
+    if (existsSync(file)) {
+      try {
+        return JSON.parse(readFileSync(file, 'utf8')).version ?? null;
+      } catch {
+        return null;
+      }
+    }
+    if (dirname(dir) === dir) return null;
+  }
+}
+
+/** package.json に書いてあるのに、入っていない(か版がちがう)部品の名前 */
+function missingDeps() {
+  let pkg;
+  try {
+    pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  } catch {
+    return [];
+  }
+  const wanted = { ...pkg.dependencies, ...pkg.devDependencies };
+  return Object.entries(wanted)
+    .filter(([name, want]) => {
+      const v = installedVersion(name);
+      return !v || (/^\d+\.\d+\.\d+$/.test(want) && v !== want);
+    })
+    .map(([name]) => name);
+}
+
+/** 部品が足りなければ npm install で入れる(サーバー用PCで git pull したあと など)。入れられなければ false */
+function ensureDeps() {
+  const missing = missingDeps();
+  if (!missing.length) return true;
+  say(`必要な部品が足りないので、入れます(npm install): ${missing.join(', ')}`);
+  say();
+  // 決まったコマンドだけを実行する(外から来た値は入れない)
+  const r = spawnSync('npm install --no-audit --no-fund', { cwd: ROOT, stdio: 'inherit', shell: true });
+  say();
+  if (r.status === 0 && !missingDeps().length) return true;
+  say('部品を入れられませんでした。インターネットにつながっているか確かめて、もう一度起動してください');
+  say();
+  return false;
+}
 
 /** ビルドに使うファイルとフォルダ(あるものだけ)。この中身が目印より新しければビルドし直す */
 function buildInputs() {
@@ -51,7 +105,48 @@ async function whoIsOnPort() {
   }
 }
 
-const say = (s = '') => console.log(s ? `  ${s}` : '');
+/** 動いている本番サーバーの、サーバー側のしくみの版。ランキングの API が無い古いサーバーなら null */
+async function runningRev() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${PORT}/api/ranking/ping`, { signal: AbortSignal.timeout(2000) });
+    const body = await res.json();
+    return typeof body?.rev === 'string' ? body.rev : null;
+  } catch {
+    return null;
+  }
+}
+
+/** データベースの設定ファイルが無ければ、ひな形(.env.example)から作る。作ったら true */
+function ensureEnvFile() {
+  const file = join(ROOT, ENV_FILE);
+  const example = join(ROOT, `${ENV_FILE}.example`);
+  if (existsSync(file) || !existsSync(example) || process.env.DATABASE_URL || process.env.PGHOST) return false;
+  copyFileSync(example, file);
+  return true;
+}
+
+/** ランキングのデータベースにつながるか確かめて、結果を出す(つながらなくてもゲームは遊べる) */
+async function showDatabase() {
+  const made = ensureEnvFile();
+  const r = await checkDatabase(ROOT);
+  if (r.ok) {
+    say(`ランキング: データベースにつながりました(${r.target})`);
+    say(`  記録: つみあげ ${r.counts.stack}人・つめこみ ${r.counts.pack}人${r.created ? `(テーブル ${r.table} を作りました)` : ''}`);
+    if (!/^(UTF8|SQL_ASCII)$/i.test(r.encoding)) {
+      say(`  ※ データベースの文字コードが ${r.encoding} なので、日本語のなまえが入らないかもしれません(UTF8 がおすすめ)`);
+    }
+  } else if (r.reason === 'no-config') {
+    say(made ? `ランキング: データベースの設定ファイルを作りました` : 'ランキング: データベースの設定がまだです');
+    say(`  ${join(ROOT, ENV_FILE)} をメモ帳で開いて、PostgreSQL の場所とユーザー・パスワードを書いてください`);
+    say('  書けば、起動し直さなくてもつながります(もう一度ダブルクリックすると、つながったか確かめられます)');
+    say('  ランキング以外は、いまも遊べます');
+  } else {
+    say('ランキング: データベースにつながりません');
+    say(`  ${r.text}`);
+    say(`  ${ENV_FILE} を直せば、起動し直さなくてもつながります。ランキング以外は、このまま遊べます`);
+  }
+  say();
+}
 
 /** 終了コードを返す。null = サーバーを動かしたままにする */
 async function main() {
@@ -59,6 +154,10 @@ async function main() {
   say();
   say(process.title);
   say();
+
+  if (!ensureDeps()) return 1;
+  // 部品がそろってから読みこむ(足りないまま読みこむと、ここで止まってしまう)
+  const { build, preview } = await import('vite');
 
   const rebuilt = needsBuild();
   if (rebuilt) {
@@ -84,6 +183,13 @@ async function main() {
   }
 
   const port = await whoIsOnPort();
+  if (port === 'game' && (await runningRev()) !== serverRev(ROOT)) {
+    // dist は読み直してくれるが、サーバー側のしくみは起動したときのまま。古いままだとランキングがおかしくなる
+    say('本番サーバーは起動していますが、サーバー側のしくみ(ランキングなど)が新しくなりました');
+    say('いま動いている本番サーバーのウィンドウを閉じてから、もう一度起動してください');
+    say();
+    return 1;
+  }
   if (port === 'game') {
     say('本番サーバーは、もう起動しています');
     say(
@@ -92,6 +198,7 @@ async function main() {
         : '変更はないので、このまま遊べます',
     );
     say();
+    await showDatabase();
     return 0;
   }
   if (port === 'free') {
@@ -103,6 +210,8 @@ async function main() {
       server.printUrls();
       say();
       say('同じ Wi-Fi の友だちには、Network の行のうち「Wi-Fi」と書いてある URL を送ってください');
+      say();
+      await showDatabase();
       say('止めるときは、このウィンドウを閉じてください(または Ctrl+C)');
       say();
       return null;

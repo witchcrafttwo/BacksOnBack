@@ -18,6 +18,27 @@
     <div id="stage">
       <canvas id="game" aria-label="バックおんバックス ゲーム画面" role="img"></canvas>
     </div>
+    <!-- ランキングのなまえ入力(src/nameDialog.js が出し入れする) -->
+    <div id="name-dialog" class="name-dialog" hidden>
+      <form class="name-panel" role="dialog" aria-modal="true" aria-labelledby="name-title" aria-describedby="name-note">
+        <h2 id="name-title">ランキングの なまえ</h2>
+        <input
+          id="name-input"
+          type="text"
+          maxlength="10"
+          required
+          autocomplete="off"
+          spellcheck="false"
+          enterkeyhint="done"
+          aria-labelledby="name-title"
+        />
+        <p id="name-note">10文字まで。ログインは いりません（この端末が おぼえておきます）</p>
+        <div class="name-buttons">
+          <button type="button" data-cancel>やめる</button>
+          <button type="submit">きめる</button>
+        </div>
+      </form>
+    </div>
     <noscript>このゲームを遊ぶには JavaScript を有効にしてください。</noscript>
     <script type="module" src="/src/main.js"></script>
   </body>

@@ -3,6 +3,8 @@ import { GameWorld, makeBin, speedOf, spinOf } from './world.js';
 import { rollBag, BAG_BY_KEY } from './bags.js';
 import { render } from './render.js';
 import * as A from './audio.js';
+import { fetchRanking, playerName, renamePlayer, setPlayerName, submitScore } from './ranking.js';
+import { askName } from './nameDialog.js';
 
 const STEP = 1000 / 60;
 /** ミス直後、連鎖で落ちたバッグを同じミスとして扱う時間(ms) */
@@ -15,7 +17,21 @@ const SPEED_ROW_Y = { title: 592, over: 492 };
 /** タイトル画面のモード選択カード */
 const MODE_CARD = { y: 328, h: 112 };
 /** ゲームオーバー画面の「タイトルへ」ボタン */
-const TITLE_BTN = { x: C.VIEW.W / 2 - 90, y: 602, w: 180, h: 44 };
+const TITLE_BTN = { x: 56, y: 602, w: 178, h: 44 };
+/** 「ランキング」ボタン(タイトル画面 / ゲームオーバー画面) */
+const RANK_BTN = {
+  title: { x: C.VIEW.W / 2 - 100, y: 684, w: 200, h: 46 },
+  over: { x: 246, y: 602, w: 178, h: 44 },
+};
+/** ランキング画面のボタン(モードのタブ・なまえ・もどる) */
+const RANK_UI = {
+  tabs: {
+    stack: { x: 84, y: 74, w: 150, h: 40 },
+    pack: { x: 246, y: 74, w: 150, h: 40 },
+  },
+  name: { x: C.VIEW.W / 2 - 150, y: 640, w: 300, h: 44 },
+  back: { x: C.VIEW.W / 2 - 100, y: 696, w: 200, h: 46 },
+};
 
 /** モードの名前(画面表示用) */
 export const MODE_LABEL = { stack: 'つみあげ', pack: 'つめこみ' };
@@ -146,6 +162,17 @@ export class Game {
     this.fx = [];
     this.titleStack = [BAG_BY_KEY.duffel, BAG_BY_KEY.backpack, BAG_BY_KEY.paper];
 
+    /** ランキング画面: どのモードを見ているか・読みこみの状態・どの画面から来たか */
+    this.ranking = { mode: this.mode, status: 'idle', data: null, from: 'title' };
+    /** ゲームオーバーのときに送ったスコアの結果(null = 送っていない) */
+    this.rankResult = null;
+    /** 古い通信の結果を捨てるための番号 */
+    this.rankToken = 0;
+    this.submitToken = 0;
+    /** ランキングに出すなまえ / なまえを入力している最中か */
+    this.myName = playerName();
+    this.modal = false;
+
     this.pressedBtn = null;
 
     const fy = C.FOOTER_Y + 14;
@@ -213,8 +240,20 @@ export class Game {
 
   onPointerDown(e) {
     A.unlockAudio();
+    if (this.modal) return;
     const p = this.toLocal(e);
     const inside = (r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+
+    if (this.state === 'ranking') {
+      // ランキング画面のボタン。指を離したときに動く
+      const ui = this.rankingUi();
+      if (inside(ui.tabs.stack)) this.pressedBtn = 'rank:stack';
+      else if (inside(ui.tabs.pack)) this.pressedBtn = 'rank:pack';
+      else if (inside(ui.name)) this.pressedBtn = 'rank:name';
+      else if (inside(ui.back)) this.pressedBtn = 'rank:back';
+      else this.pressedBtn = 'none';
+      return;
+    }
 
     if (this.state === 'title' || this.state === 'over') {
       // 「はやさ」の選択。ここを押したときはゲームを始めない
@@ -224,7 +263,9 @@ export class Game {
         this.setSpeed(level);
         return;
       }
-      if (this.state === 'title') {
+      if (inside(this.rankButton)) {
+        this.pressedBtn = 'ranking';
+      } else if (this.state === 'title') {
         // モードのカード。指を離したときに始める
         const ui = this.modeUi();
         if (inside(ui.stack)) this.pressedBtn = 'mode:stack';
@@ -342,8 +383,20 @@ export class Game {
   onPointerUp() {
     // スマホは指を離したとき(pointerup)にしか音の再生を許可しないので、ここでも解放する
     A.unlockAudio();
+    if (this.modal) return;
     const wasBtn = this.pressedBtn;
     this.pressedBtn = null;
+    if (wasBtn?.startsWith('rank:') && this.state === 'ranking' && this.inputLock <= 0) {
+      const what = wasBtn.slice(5);
+      if (what === 'back') this.closeRanking();
+      else if (what === 'name') this.changeName();
+      else this.showRanking(what);
+      return;
+    }
+    if (wasBtn === 'ranking' && (this.state === 'title' || this.state === 'over') && this.inputLock <= 0) {
+      this.openRanking();
+      return;
+    }
     if (wasBtn?.startsWith('mode:') && this.state === 'title' && this.inputLock <= 0) {
       this.mode = wasBtn.slice(5);
       this.start(this.mode);
@@ -359,7 +412,14 @@ export class Game {
   }
 
   onKeyDown(e) {
+    // なまえを入力している間は、ゲームの操作をしない
+    if (this.modal) return;
+    if (this.state === 'ranking') {
+      this.onRankingKey(e);
+      return;
+    }
     const menu = this.state === 'title' || this.state === 'over';
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
     if (e.code === 'Space' || e.code === 'Enter') {
       e.preventDefault();
       A.unlockAudio();
@@ -382,6 +442,10 @@ export class Game {
     } else if (menu && /^(Digit|Numpad)[1-9]$/.test(e.code)) {
       const i = Number(e.code.slice(-1)) - 1;
       if (i < C.SPEED_LEVELS.length) this.setSpeed(i);
+    } else if (menu && plain && e.code === 'KeyR') {
+      // R でランキング(Ctrl+R の再読み込みはじゃましない)
+      e.preventDefault();
+      if (this.inputLock <= 0) this.openRanking();
     } else if (e.code === 'ArrowLeft' || e.code === 'KeyZ' || e.code === 'Comma') {
       e.preventDefault();
       this.rotate(-1);
@@ -389,6 +453,28 @@ export class Game {
       e.preventDefault();
       this.rotate(1);
     } else if (e.code === 'KeyM') {
+      A.unlockAudio();
+      A.toggleMute();
+    }
+  }
+
+  /** ランキング画面のキー: ← → / Tab でモード、R で読みなおし、N でなまえ、Esc・スペースなどで戻る */
+  onRankingKey(e) {
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowRight' || e.code === 'Tab') {
+      e.preventDefault();
+      this.showRanking(this.ranking.mode === 'stack' ? 'pack' : 'stack');
+    } else if (e.code === 'Escape' || e.code === 'Backspace' || e.code === 'Space' || e.code === 'Enter') {
+      e.preventDefault();
+      if (!e.repeat && this.inputLock <= 0) this.closeRanking();
+    } else if (plain && e.code === 'KeyR') {
+      e.preventDefault();
+      if (!e.repeat) this.showRanking(this.ranking.mode);
+    } else if (plain && e.code === 'KeyN') {
+      // 押した文字が入力欄に入らないよう、先に止めてから開く
+      e.preventDefault();
+      this.changeName();
+    } else if (plain && e.code === 'KeyM') {
       A.unlockAudio();
       A.toggleMute();
     }
@@ -429,6 +515,9 @@ export class Game {
     this.placedCount = 0;
     this.burstCount = 0;
     this.newBest = false;
+    // 前のゲームのランキングの結果が、あとから届いても使わない
+    this.submitToken++;
+    this.rankResult = null;
     this.recordPx = 0;
     this.lossGrace = 0;
     this.camY = 0;
@@ -750,6 +839,98 @@ export class Game {
       }
     }
     A.sfxGameOver();
+    this.submitRanking();
+  }
+
+  // ---------------------------------------------------------------- ランキング
+
+  /** 「ランキング」ボタンの位置(タイトル画面とゲームオーバー画面で違う) */
+  get rankButton() {
+    return this.state === 'over' ? RANK_BTN.over : RANK_BTN.title;
+  }
+
+  /** ランキング画面のボタンの位置(描画と当たり判定で共有) */
+  rankingUi() {
+    return RANK_UI;
+  }
+
+  /** ランキング画面を開く(いま選んでいるモードのランキングから) */
+  openRanking() {
+    if (this.state !== 'title' && this.state !== 'over') return;
+    this.ranking.from = this.state;
+    this.state = 'ranking';
+    this.pressedBtn = null;
+    this.inputLock = 150;
+    A.sfxClick();
+    this.showRanking(this.mode, true);
+  }
+
+  /** mode のランキングを読みこむ。前に読んだ同じモードの一覧があれば、読みこむ間もそれを出しておく */
+  showRanking(mode, quiet = false) {
+    if (!quiet) A.sfxClick();
+    const token = ++this.rankToken;
+    const keep = this.ranking.mode === mode ? this.ranking.data : null;
+    this.ranking = { ...this.ranking, mode, status: 'loading', data: keep };
+    fetchRanking(mode).then((res) => {
+      if (token !== this.rankToken) return; // もう別のモードを見ている
+      this.ranking = { ...this.ranking, status: res.ok ? 'ok' : 'error', data: res.ok ? res : this.ranking.data };
+    });
+  }
+
+  /** ランキング画面を閉じて、来た画面(タイトル / ゲームオーバー)に戻る */
+  closeRanking() {
+    this.state = this.ranking.from === 'over' ? 'over' : 'title';
+    this.pressedBtn = null;
+    this.inputLock = 200;
+    A.sfxClick();
+  }
+
+  /** ゲームオーバーのとき、スコアをランキングに送る(サーバーが 1 人 1 つ、自己ベストだけ残す) */
+  submitRanking() {
+    const token = ++this.submitToken;
+    this.rankResult = null;
+    const score = Math.round(this.score);
+    if (score <= 0) return;
+    this.rankResult = { status: 'sending' };
+    // くわしい記録: つみあげ = 高さ(m) / つめこみ = 出荷した箱の数
+    const detail = this.isPack ? this.shippedBoxes : Math.round((this.world.maxHeightPx / C.PX_PER_M) * 10) / 10;
+    submitScore({ mode: this.mode, score, speed: this.speedLevel, detail }).then((res) => {
+      if (token !== this.submitToken) return; // もう次のゲームを始めている
+      if (!res.ok) {
+        this.rankResult = { status: 'error' };
+        return;
+      }
+      const rank = res.me?.rank ?? null;
+      this.rankResult = { status: 'ok', improved: res.improved, rank, total: res.total };
+      if (res.improved && rank !== null && rank <= 3) A.sfxPerfect(10 - rank * 2);
+    });
+  }
+
+  /** ランキングに出すなまえを変える(HTML の入力画面を出す) */
+  async changeName() {
+    if (this.modal) return;
+    this.modal = true;
+    this.pressedBtn = null;
+    let name = null;
+    try {
+      name = await this.promptName(this.myName);
+    } finally {
+      this.modal = false;
+      this.inputLock = 200;
+    }
+    const clean = name === null ? '' : setPlayerName(name);
+    if (!clean || clean === this.myName) return;
+    this.myName = clean;
+    A.sfxClick();
+    // つながらなくても、次にスコアを送るときに新しいなまえになる
+    const res = await renamePlayer(clean);
+    if (res.ok && res.name && res.name !== clean) this.myName = setPlayerName(res.name) || clean;
+    if (this.state === 'ranking') this.showRanking(this.ranking.mode, true);
+  }
+
+  /** なまえを聞く(キャンバスの上に重ねる HTML の入力画面) */
+  promptName(current) {
+    return askName(current);
   }
 
   // ---------------------------------------------------------------- 演出
@@ -958,7 +1139,8 @@ export class Game {
     this.displayScore = C.lerp(this.displayScore, this.score, 0.18);
     if (Math.abs(this.displayScore - this.score) < 0.6) this.displayScore = this.score;
 
-    if (this.state !== 'title') {
+    // ランキング画面を見ている間は止めておく(ゲームオーバーの山が崩れても、ライフや点数が動かないように)
+    if (this.state !== 'title' && this.state !== 'ranking') {
       this.world.step(dt);
       this.handleLosses();
       if (this.isPack && this.state !== 'over' && this.state !== 'ship') {

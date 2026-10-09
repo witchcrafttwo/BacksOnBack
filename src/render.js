@@ -557,7 +557,7 @@ function drawShipResult(ctx, game) {
 /** 次の箱が来たときの案内(何箱目・種類・ノルマ) */
 function drawBanner(ctx, game) {
   const bn = game.banner;
-  if (!bn || !game.isPack || game.state === 'over') return;
+  if (!bn || !game.isPack || game.state === 'over' || game.state === 'ranking') return;
   const look = BIN_LOOK[bn.type] ?? BIN_LOOK.normal;
   const lines = bn.lines.filter(Boolean);
   const t = bn.maxLife - bn.life;
@@ -1807,6 +1807,8 @@ function drawTitle(ctx, game) {
     shadow: 2,
   });
   ctx.globalAlpha = 1;
+
+  drawRankButton(ctx, game);
 }
 
 function drawGameOver(ctx, game) {
@@ -1835,6 +1837,7 @@ function drawGameOver(ctx, game) {
   });
 
   panel(ctx, 56, y0 + 52, C.VIEW.W - 112, 210, 16, 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0.16)');
+  /** 行: [見出し, 値, 色(なければ決まった色)] */
   const rows = game.isPack
     ? [
         ['スコア', String(game.score)],
@@ -1850,23 +1853,27 @@ function drawGameOver(ctx, game) {
         ['積んだバッグ', `${game.placedCount} 個`],
         ['中身ドバー', `${game.burstCount} 回`],
       ];
-  rows.forEach(([k, v], i) => {
-    const y = y0 + 86 + i * 38;
+  const rank = rankRow(game);
+  rows.push(['ランキング', rank.text, rank.color]);
+  rows.forEach(([k, v, color], i) => {
+    const y = y0 + 80 + i * 33;
     text(ctx, k, 80, y, { size: 14, color: 'rgba(255,255,255,0.65)' });
     text(ctx, v, C.VIEW.W - 80, y, {
       size: i === 0 ? 24 : 18,
       weight: '800',
-      color: i === 0 ? '#ffe08a' : '#fff',
+      color: color ?? (i === 0 ? '#ffe08a' : '#fff'),
       align: 'right',
     });
   });
 
-  if (game.newBest) {
+  const r = game.rankResult;
+  const top1 = r?.status === 'ok' && r.improved && r.rank === 1;
+  if (top1 || game.newBest) {
     const s = 1 + Math.sin(game.time / 200) * 0.06;
     ctx.save();
     ctx.translate(C.VIEW.W / 2, y0 + 292);
     ctx.scale(s, s);
-    text(ctx, '🎉 ハイスコア更新！', 0, 0, {
+    text(ctx, top1 ? '👑 ランキング 1位！' : '🎉 ハイスコア更新！', 0, 0, {
       size: 21,
       weight: '800',
       color: '#ffe08a',
@@ -1900,6 +1907,206 @@ function drawGameOver(ctx, game) {
     align: 'center',
     baseline: 'middle',
   });
+  drawRankButton(ctx, game);
+}
+
+// ------------------------------------------------------------------ ランキング
+
+const MODE_NAME = { stack: 'つみあげ', pack: 'つめこみ' };
+const MODE_ACCENT = { stack: '#8ef0c9', pack: '#ffb27a' };
+/** 1〜3 位のメダルの色 */
+const MEDAL = ['#ffd35c', '#d6dde8', '#e0a46b'];
+/** ランキングの一覧(10 人ぶん)の位置 */
+const RANK_LIST = { x: 24, y: 128, w: 432, rowH: 40 };
+
+/** 「🏆 ランキング」ボタン(タイトル画面・ゲームオーバー画面) */
+function drawRankButton(ctx, game) {
+  const b = game.rankButton;
+  const pressed = game.pressedBtn === 'ranking';
+  // タイトル画面では土台のトランクに重なるので、透けない色にする
+  panel(
+    ctx,
+    b.x,
+    b.y,
+    b.w,
+    b.h,
+    14,
+    pressed ? 'rgba(96,80,36,0.96)' : 'rgba(32,30,50,0.94)',
+    'rgba(255,224,138,0.8)',
+  );
+  text(ctx, '🏆 ランキング', b.x + b.w / 2, b.y + b.h / 2 + 1, {
+    size: 15,
+    weight: '800',
+    color: '#ffe08a',
+    align: 'center',
+    baseline: 'middle',
+  });
+}
+
+/** ゲームオーバー画面の「ランキング」の行に出す文字と色 */
+function rankRow(game) {
+  const r = game.rankResult;
+  if (!r) return { text: '—', color: 'rgba(255,255,255,0.4)' };
+  if (r.status === 'sending') return { text: '送信中…', color: 'rgba(255,255,255,0.55)' };
+  if (r.status === 'error') return { text: 'つながらない…', color: '#ffb0a4' };
+  if (r.rank === null) return { text: `ランク外 / ${r.total}人`, color: '#fff' };
+  // 自己ベストに届かなかったときは、自己ベストの順位を出す
+  if (!r.improved) return { text: `ベストで ${r.rank}位`, color: '#fff' };
+  return { text: `${r.rank}位 / ${r.total}人`, color: r.rank <= 3 ? '#ffe08a' : '#8ef0c9' };
+}
+
+/** ランキングの 1 行(順位・なまえ・くわしい記録・クレーンのはやさ・スコア)。自分の行は枠で囲む */
+function drawRankRow(ctx, e, x, y, w, h, mode, accent) {
+  if (e.me) panel(ctx, x, y + 2, w, h - 4, 10, 'rgba(255,255,255,0.12)', accent);
+  const cy = y + h / 2 + 1;
+  if (e.rank <= 3) {
+    ctx.fillStyle = MEDAL[e.rank - 1];
+    ctx.beginPath();
+    ctx.arc(x + 22, cy - 1, 13, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  text(ctx, String(e.rank), x + 22, cy, {
+    size: e.rank >= 100 ? 11 : 14,
+    weight: '800',
+    color: e.rank <= 3 ? '#1b2340' : 'rgba(255,255,255,0.75)',
+    align: 'center',
+    baseline: 'middle',
+  });
+  text(ctx, e.name, x + 46, cy, { size: 15, weight: '800', color: e.me ? accent : '#fff', baseline: 'middle' });
+  const detail = mode === 'pack' ? `${e.detail}箱` : `${Number(e.detail).toFixed(1)}m`;
+  text(ctx, detail, x + w - 140, cy, { size: 11, color: 'rgba(255,255,255,0.6)', align: 'right', baseline: 'middle' });
+  text(ctx, `×${(C.SPEED_LEVELS[e.speed] ?? 1).toFixed(1)}`, x + w - 132, cy, {
+    size: 11,
+    weight: '800',
+    color: SPEED_COLORS[e.speed] ?? '#fff',
+    baseline: 'middle',
+  });
+  text(ctx, e.score.toLocaleString('ja-JP'), x + w - 10, cy, {
+    size: 17,
+    weight: '800',
+    color: e.rank === 1 ? '#ffe08a' : '#fff',
+    align: 'right',
+    baseline: 'middle',
+  });
+}
+
+function drawRanking(ctx, game) {
+  // うしろの土台やスーツケースが透けて読みにくくならないよう、濃いめに暗くする
+  dim(ctx, 0.93);
+  const rk = game.ranking;
+  const ui = game.rankingUi();
+  const accent = MODE_ACCENT[rk.mode];
+  text(ctx, '🏆 ランキング', C.VIEW.W / 2, 54, {
+    size: 28,
+    weight: '800',
+    color: '#ffe08a',
+    align: 'center',
+    shadow: 2,
+  });
+
+  // モードのタブ
+  for (const mode of ['stack', 'pack']) {
+    const r = ui.tabs[mode];
+    const sel = rk.mode === mode;
+    const pressed = game.pressedBtn === `rank:${mode}`;
+    panel(
+      ctx,
+      r.x,
+      r.y,
+      r.w,
+      r.h,
+      12,
+      pressed ? 'rgba(255,255,255,0.26)' : sel ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)',
+      sel ? MODE_ACCENT[mode] : 'rgba(255,255,255,0.18)',
+    );
+    text(ctx, MODE_NAME[mode], r.x + r.w / 2, r.y + r.h / 2 + 1, {
+      size: 16,
+      weight: '800',
+      color: sel ? MODE_ACCENT[mode] : 'rgba(255,255,255,0.6)',
+      align: 'center',
+      baseline: 'middle',
+    });
+  }
+
+  // 一覧
+  const L = RANK_LIST;
+  const listH = L.rowH * 10 + 12;
+  panel(ctx, L.x, L.y, L.w, listH, 16, 'rgba(24,30,58,0.92)', 'rgba(255,255,255,0.14)');
+  const data = rk.data;
+  const midY = L.y + listH / 2;
+  const center = (s, y, size, color, weight = '800') =>
+    text(ctx, s, C.VIEW.W / 2, y, { size, weight, color, align: 'center', baseline: 'middle' });
+  if (!data) {
+    if (rk.status === 'error') {
+      center('ランキングに つながりません', midY - 10, 17, '#ffb0a4');
+      center('すこし待ってから もう一度 開いてください', midY + 18, 12, 'rgba(255,255,255,0.6)', '600');
+    } else {
+      center('よみこみ中…', midY, 17, 'rgba(255,255,255,0.7)');
+    }
+  } else if (!data.top.length) {
+    center('まだ だれも いません', midY - 10, 17, '#fff');
+    center('いま遊べば 1位！', midY + 18, 13, accent);
+  } else {
+    data.top.forEach((e, i) => drawRankRow(ctx, e, L.x + 8, L.y + 6 + i * L.rowH, L.w - 16, L.rowH, rk.mode, accent));
+    // 10 位より下のときは、自分の順位を一覧の下に出す
+    if (data.me && data.me.rank > data.top.length) {
+      drawRankRow(ctx, data.me, L.x + 8, L.y + listH + 6, L.w - 16, L.rowH, rk.mode, accent);
+    }
+  }
+  if (data) {
+    const note = rk.status === 'error' ? 'つながらないので、前に読んだ一覧です' : '1人1つ(自己ベスト) ・ ×はクレーンのはやさ';
+    text(ctx, `${data.total}人 ・ ${note}`, C.VIEW.W / 2, 618, {
+      size: 11,
+      color: rk.status === 'error' ? '#ffb0a4' : 'rgba(255,255,255,0.6)',
+      align: 'center',
+    });
+  }
+
+  // なまえ(押すと変えられる)
+  const nb = ui.name;
+  panel(
+    ctx,
+    nb.x,
+    nb.y,
+    nb.w,
+    nb.h,
+    14,
+    game.pressedBtn === 'rank:name' ? 'rgba(255,255,255,0.26)' : 'rgba(255,255,255,0.1)',
+    'rgba(255,255,255,0.32)',
+  );
+  text(ctx, `✎ なまえ: ${game.myName}`, nb.x + nb.w / 2, nb.y + nb.h / 2 + 1, {
+    size: 15,
+    weight: '800',
+    color: '#fff',
+    align: 'center',
+    baseline: 'middle',
+  });
+
+  // もどる
+  const bb = ui.back;
+  panel(
+    ctx,
+    bb.x,
+    bb.y,
+    bb.w,
+    bb.h,
+    14,
+    game.pressedBtn === 'rank:back' ? 'rgba(255,255,255,0.26)' : 'rgba(255,255,255,0.1)',
+    'rgba(255,255,255,0.32)',
+  );
+  text(ctx, '◀ もどる', bb.x + bb.w / 2, bb.y + bb.h / 2 + 1, {
+    size: 15,
+    weight: '800',
+    color: '#fff',
+    align: 'center',
+    baseline: 'middle',
+  });
+
+  text(ctx, '← → で切りかえ ・ N で なまえ ・ Esc で もどる', C.VIEW.W / 2, 772, {
+    size: 11,
+    color: 'rgba(255,255,255,0.45)',
+    align: 'center',
+  });
 }
 
 // ------------------------------------------------------------------ 本体
@@ -1912,7 +2119,7 @@ export function render(ctx, game) {
 
   ctx.save();
   ctx.translate(game.shake.x, game.shake.y);
-  if (game.state !== 'title' && !game.isPack) drawHeightLines(ctx, game);
+  if (game.state !== 'title' && game.state !== 'ranking' && !game.isPack) drawHeightLines(ctx, game);
 
   ctx.save();
   ctx.translate(0, game.camY);
@@ -1936,11 +2143,12 @@ export function render(ctx, game) {
   drawFx(ctx, game);
   ctx.restore();
 
-  if (game.state !== 'title' && game.state !== 'over') drawCrane(ctx, game);
+  if (game.state !== 'title' && game.state !== 'over' && game.state !== 'ranking') drawCrane(ctx, game);
   ctx.restore();
 
   if (game.state === 'title') drawTitle(ctx, game);
   else if (game.state === 'over') drawGameOver(ctx, game);
+  else if (game.state === 'ranking') drawRanking(ctx, game);
   else drawHud(ctx, game);
 
   ctx.restore();

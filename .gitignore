@@ -1,5 +1,7 @@
 node_modules
 dist
+# データベースのパスワードなどの設定(GitHub には上げない。ひな形は .env.example)
+.env
 dist-ssr
 *.local
 .DS_Store

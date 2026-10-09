@@ -51,3 +51,87 @@ noscript {
   color: #fff;
   font-size: 18px;
 }
+
+/* ランキングのなまえ入力(キャンバスの上に重ねる)。スマホのキーボードに隠れないよう上寄せ */
+.name-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 16vh 16px 16px;
+  background: rgba(8, 10, 24, 0.62);
+}
+
+.name-dialog[hidden] {
+  display: none;
+}
+
+.name-panel {
+  width: min(360px, 100%);
+  padding: 20px 20px 16px;
+  border-radius: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  background: #182044;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+
+.name-panel h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  text-align: center;
+}
+
+.name-panel input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font: inherit;
+  /* 16px より小さいと、iPhone が入力のときに画面を拡大してしまう */
+  font-size: 18px;
+}
+
+.name-panel input:focus {
+  outline: none;
+  border-color: #8ef0c9;
+}
+
+.name-panel p {
+  margin: 10px 0 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.name-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.name-buttons button {
+  flex: 1;
+  min-height: 46px;
+  border-radius: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.name-buttons button[type='submit'] {
+  border-color: #d9fff0;
+  background: #36b383;
+}
+
+.name-buttons button:focus-visible {
+  outline: 3px solid #ffe08a;
+  outline-offset: 2px;
+}
